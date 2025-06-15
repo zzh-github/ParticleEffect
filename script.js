@@ -1,12 +1,31 @@
 let scene, camera, renderer, currentShape, controls;
 let particles = [];
 let currentShapeType = 'cube';
+let isTransitioning = false;
+let transitionProgress = 0;
+let oldParticles = [];
+let targetParticles = [];
+let colorPicker;
+
+let isColorMode = false;  // 添加彩色模式标志
+
+// 预定义的颜色组合
+const COLOR_PALETTES = [
+    ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4'],
+    ['#FF9F1C', '#FFBF69', '#FFFFFF', '#CBF3F0'],
+    ['#2A9D8F', '#E9C46A', '#F4A261', '#E76F51'],
+    ['#9B5DE5', '#F15BB5', '#FEE440', '#00BBF9'],
+    ['#FF006E', '#FB5607', '#8338EC', '#3A86FF']
+];
 
 // 默认参数
 const DEFAULT_PARAMS = {
-    particleSize: 0.02,
+    particleSize: 0.01,
     particleCount: 2000,
-    shapeSize: 1
+    shapeSize: 1,
+    layerCount: 5,
+    layerOffset: 0.05,
+    randomOffset: 0.05
 };
 
 // 当前参数
@@ -85,18 +104,46 @@ function initControls() {
         shapeSizeValue.textContent = currentParams.shapeSize;
         updateCurrentShape();
     });
+
+    // 层间距控制
+    const layerOffsetInput = document.getElementById('layerOffset');
+    const layerOffsetValue = document.getElementById('layerOffsetValue');
+    layerOffsetInput.value = currentParams.layerOffset;
+    layerOffsetValue.textContent = currentParams.layerOffset;
+    layerOffsetInput.addEventListener('input', (e) => {
+        currentParams.layerOffset = parseFloat(e.target.value);
+        layerOffsetValue.textContent = currentParams.layerOffset;
+        updateCurrentShape();
+    });
+
+    // 随机偏移控制
+    const randomOffsetInput = document.getElementById('randomOffset');
+    const randomOffsetValue = document.getElementById('randomOffsetValue');
+    randomOffsetInput.value = currentParams.randomOffset;
+    randomOffsetValue.textContent = currentParams.randomOffset;
+    randomOffsetInput.addEventListener('input', (e) => {
+        currentParams.randomOffset = parseFloat(e.target.value);
+        randomOffsetValue.textContent = currentParams.randomOffset;
+        updateCurrentShape();
+    });
 }
 
 function resetParameters() {
     currentParams = { ...DEFAULT_PARAMS };
     
-    // 更新控制面板显示
-    document.getElementById('particleSize').value = currentParams.particleSize;
-    document.getElementById('particleSizeValue').textContent = currentParams.particleSize;
-    document.getElementById('particleCount').value = currentParams.particleCount;
-    document.getElementById('particleCountValue').textContent = currentParams.particleCount;
-    document.getElementById('shapeSize').value = currentParams.shapeSize;
-    document.getElementById('shapeSizeValue').textContent = currentParams.shapeSize;
+    // 更新所有控制面板显示
+    const controls = {
+        'particleSize': currentParams.particleSize,
+        'particleCount': currentParams.particleCount,
+        'shapeSize': currentParams.shapeSize,
+        'layerOffset': currentParams.layerOffset,
+        'randomOffset': currentParams.randomOffset
+    };
+    
+    Object.entries(controls).forEach(([key, value]) => {
+        document.getElementById(key).value = value;
+        document.getElementById(key + 'Value').textContent = value;
+    });
     
     updateCurrentShape();
 }
@@ -131,22 +178,54 @@ function addColorPicker() {
 
 function createParticles(geometry) {
     const positions = geometry.attributes.position.array;
+    const normals = geometry.attributes.normal.array;
     const particles = [];
     
-    for (let i = 0; i < positions.length; i += 3) {
-        const x = positions[i] * currentParams.shapeSize;
-        const y = positions[i + 1] * currentParams.shapeSize;
-        const z = positions[i + 2] * currentParams.shapeSize;
+    // 计算每层的粒子数量
+    const particlesPerLayer = Math.floor(currentParams.particleCount / currentParams.layerCount);
+    
+    // 为每一层创建粒子
+    for (let layer = 0; layer < currentParams.layerCount; layer++) {
+        const layerOffset = layer * currentParams.layerOffset;
         
-        const particleGeometry = new THREE.SphereGeometry(currentParams.particleSize, 8, 8);
-        const particleMaterial = new THREE.MeshPhongMaterial({
-            color: colorPicker.value,
-            shininess: 100
-        });
-        
-        const particle = new THREE.Mesh(particleGeometry, particleMaterial);
-        particle.position.set(x, y, z);
-        particles.push(particle);
+        // 为当前层创建粒子
+        for (let i = 0; i < positions.length; i += 3) {
+            const x = positions[i];
+            const y = positions[i + 1];
+            const z = positions[i + 2];
+            
+            // 获取法线方向
+            const nx = normals[i];
+            const ny = normals[i + 1];
+            const nz = normals[i + 2];
+            
+            // 计算偏移后的位置
+            const offsetX = x + nx * layerOffset;
+            const offsetY = y + ny * layerOffset;
+            const offsetZ = z + nz * layerOffset;
+            
+            // 添加随机偏移
+            const randomX = (Math.random() - 0.5) * currentParams.randomOffset;
+            const randomY = (Math.random() - 0.5) * currentParams.randomOffset;
+            const randomZ = (Math.random() - 0.5) * currentParams.randomOffset;
+            
+            const particleGeometry = new THREE.SphereGeometry(currentParams.particleSize, 8, 8);
+            const particleMaterial = new THREE.MeshPhongMaterial({
+                color: isColorMode ? COLOR_PALETTES[0][Math.floor(Math.random() * COLOR_PALETTES[0].length)] : colorPicker.value,
+                shininess: 100,
+                transparent: true,
+                opacity: 1 - (layer * 0.2)
+            });
+            
+            const particle = new THREE.Mesh(particleGeometry, particleMaterial);
+            particle.position.set(
+                (offsetX + randomX) * currentParams.shapeSize,
+                (offsetY + randomY) * currentParams.shapeSize,
+                (offsetZ + randomZ) * currentParams.shapeSize
+            );
+            
+            particles.push(particle);
+        }
     }
     
     return particles;
@@ -163,8 +242,9 @@ function createCube() {
 
 function createSphere() {
     const group = new THREE.Group();
-    const segments = Math.floor(Math.sqrt(currentParams.particleCount / 4));
-    const geometry = new THREE.SphereGeometry(1, segments, segments);
+    // 调整球体的分段数，使密度适中
+    const segments = Math.floor(Math.sqrt(currentParams.particleCount / 2));
+    const geometry = new THREE.SphereGeometry(1, segments * 1.5, segments * 1.5);
     const particles = createParticles(geometry);
     particles.forEach(particle => group.add(particle));
     return group;
@@ -204,34 +284,77 @@ function createTorus() {
 }
 
 function updateCurrentShape() {
-    changeShape(currentShapeType);
+    if (!isTransitioning) {
+        changeShape(currentShapeType);
+    }
 }
 
 function changeShape(shapeType) {
-    currentShapeType = shapeType;
+    if (isTransitioning) return;
     
-    // 移除当前形状
+    currentShapeType = shapeType;
+    isTransitioning = true;
+    transitionProgress = 0;
+    
+    // 保存当前粒子的位置
+    oldParticles = [];
+    if (currentShape) {
+        currentShape.children.forEach(particle => {
+            oldParticles.push({
+                position: particle.position.clone(),
+                scale: particle.scale.clone()
+            });
+        });
+    }
+    
+    // 创建新形状但暂时不添加到场景
+    let newShape;
+    switch(shapeType) {
+        case 'cube':
+            newShape = createCube();
+            break;
+        case 'sphere':
+            newShape = createSphere();
+            break;
+        case 'tree':
+            newShape = createTree();
+            break;
+        case 'torus':
+            newShape = createTorus();
+            break;
+    }
+    
+    // 保存目标粒子的位置
+    targetParticles = [];
+    newShape.children.forEach(particle => {
+        targetParticles.push({
+            position: particle.position.clone(),
+            scale: particle.scale.clone()
+        });
+    });
+    
+    // 如果当前有形状，先移除它
     if (currentShape) {
         scene.remove(currentShape);
     }
     
-    // 创建新形状
-    switch(shapeType) {
-        case 'cube':
-            currentShape = createCube();
-            break;
-        case 'sphere':
-            currentShape = createSphere();
-            break;
-        case 'tree':
-            currentShape = createTree();
-            break;
-        case 'torus':
-            currentShape = createTorus();
-            break;
-    }
-    
+    // 将新形状添加到场景
+    currentShape = newShape;
     scene.add(currentShape);
+    
+    // 立即将新形状的粒子移动到起始位置
+    currentShape.children.forEach((particle, index) => {
+        if (oldParticles[index]) {
+            particle.position.copy(oldParticles[index].position);
+            particle.scale.copy(oldParticles[index].scale);
+        }
+    });
+}
+
+function easeInOutCubic(t) {
+    return t < 0.5
+        ? 4 * t * t * t
+        : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
 
 function animate() {
@@ -241,7 +364,61 @@ function animate() {
         controls.update();
     }
     
+    // 处理形状过渡动画
+    if (isTransitioning && currentShape) {
+        transitionProgress += 0.02; // 控制过渡速度
+        
+        if (transitionProgress >= 1) {
+            isTransitioning = false;
+            transitionProgress = 1;
+        }
+        
+        // 使用缓动函数使动画更平滑
+        const easeProgress = easeInOutCubic(transitionProgress);
+        
+        // 更新每个粒子的位置和大小
+        currentShape.children.forEach((particle, index) => {
+            if (oldParticles[index] && targetParticles[index]) {
+                // 位置插值
+                particle.position.lerpVectors(
+                    oldParticles[index].position,
+                    targetParticles[index].position,
+                    easeProgress
+                );
+                
+                // 大小插值
+                particle.scale.lerpVectors(
+                    oldParticles[index].scale,
+                    targetParticles[index].scale,
+                    easeProgress
+                );
+            }
+        });
+    }
+    
     renderer.render(scene, camera);
+}
+
+function toggleColorMode() {
+    isColorMode = !isColorMode;
+    if (isColorMode) {
+        // 随机选择一个颜色组合
+        const randomPalette = COLOR_PALETTES[Math.floor(Math.random() * COLOR_PALETTES.length)];
+        if (currentShape) {
+            currentShape.children.forEach(particle => {
+                // 为每个粒子随机选择一个颜色
+                const randomColor = randomPalette[Math.floor(Math.random() * randomPalette.length)];
+                particle.material.color.set(randomColor);
+            });
+        }
+    } else {
+        // 恢复单色模式
+        if (currentShape) {
+            currentShape.children.forEach(particle => {
+                particle.material.color.set(colorPicker.value);
+            });
+        }
+    }
 }
 
 // 处理窗口大小变化
